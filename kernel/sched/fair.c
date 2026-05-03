@@ -3932,22 +3932,12 @@ bias_to_this_cpu(struct task_struct *p, int cpu, int start_cpu)
 	return base_test && start_cap_test;
 }
 
-static inline bool task_fits_capacity(struct task_struct *p,
-					long capacity,
-					int cpu)
+static inline int task_fits_cpu(struct task_struct *p, int cpu)
 {
-	unsigned int margin;
-
-	/*
-	 * Derive upmigration/downmigrate margin wrt the src/dest
-	 * CPU.
-	 */
-	if (capacity_orig_of(task_cpu(p)) > capacity_orig_of(cpu))
-		margin = sched_capacity_margin_down[cpu];
-	else
-		margin = sched_capacity_margin_up[task_cpu(p)];
-
-	return capacity * 1024 > uclamp_task_util(p) * margin;
+	unsigned long uclamp_min = uclamp_eff_value(p, UCLAMP_MIN);
+	unsigned long uclamp_max = uclamp_eff_value(p, UCLAMP_MAX);
+	unsigned long util = task_util_est(p);
+	return util_fits_cpu(util, uclamp_min, uclamp_max, cpu);
 }
 
 static inline int util_fits_cpu(unsigned long util,
@@ -4093,7 +4083,7 @@ static inline bool task_fits_max(struct task_struct *p, int cpu)
 			return false;
 	}
 
-	return task_fits_capacity(p, capacity, cpu);
+	return task_fits_cpu(p, cpu);
 }
 
 static inline bool task_demand_fits(struct task_struct *p, int cpu)
@@ -4104,7 +4094,7 @@ static inline bool task_demand_fits(struct task_struct *p, int cpu)
 	if (capacity == max_capacity)
 		return true;
 
-	return task_fits_capacity(p, capacity, cpu);
+	return task_fits_cpu(p, cpu);
 }
 
 struct find_best_target_env {
@@ -5591,8 +5581,10 @@ static unsigned long capacity_of(int cpu);
 
 bool __cpu_overutilized(int cpu, int delta)
 {
-	return (capacity_orig_of(cpu) * 1024) <
-		((cpu_util(cpu) + delta) * sched_capacity_margin_up[cpu]);
+	unsigned long rq_util_min = uclamp_rq_get(cpu_rq(cpu), UCLAMP_MIN);
+	unsigned long rq_util_max = uclamp_rq_get(cpu_rq(cpu), UCLAMP_MAX);
+
+	return !util_fits_cpu(cpu_util(cpu) + delta, rq_util_min, rq_util_max, cpu);
 }
 
 bool cpu_overutilized(int cpu)
@@ -7953,7 +7945,7 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 		goto fail;
 
 	sync_entity_load_avg(&p->se);
-	if (!task_util_est(p))
+	if (!uclamp_task_util(p))
 		goto unlock;
 
 	if (sched_feat(FIND_BEST_TARGET)) {
