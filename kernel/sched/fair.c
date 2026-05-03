@@ -132,6 +132,7 @@ unsigned int sysctl_sched_wakeup_granularity		= 1000000UL;
 unsigned int normalized_sysctl_sched_wakeup_granularity	= 1000000UL;
 
 const_debug unsigned int sysctl_sched_migration_cost	= 500000UL;
+#define fits_capacity(cap, max)     ((cap) * 1280 < (max) * 1024)
 DEFINE_PER_CPU_READ_MOSTLY(int, sched_load_boost);
 
 #ifdef CONFIG_SMP
@@ -3931,6 +3932,8 @@ bias_to_this_cpu(struct task_struct *p, int cpu, int start_cpu)
 
 	return base_test && start_cap_test;
 }
+static inline int task_fits_cpu(struct task_struct *p, int cpu);
+static inline int util_fits_cpu(unsigned long util, unsigned long uclamp_min, unsigned long uclamp_max, int cpu);
 
 static inline int task_fits_cpu(struct task_struct *p, int cpu)
 {
