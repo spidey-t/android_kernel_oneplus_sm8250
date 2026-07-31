@@ -140,3 +140,5 @@ kernel/configs/android-*.cfg
 #
 Android.bp
 out
+build.log
+*.zip
