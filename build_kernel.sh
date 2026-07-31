@@ -7,7 +7,7 @@ set -e
 cwd="$PWD"
 
 # Toolchain paths
-TOOLCHAIN_PATH="~/android/lunaris/prebuilts/clang/host/linux-x86/clang-r574158/bin"
+TOOLCHAIN_PATH=~/android/lunaris/prebuilts/clang/host/linux-x86/clang-r574158/bin
 
 export PATH="$TOOLCHAIN_PATH:$GCC64_PATH:$GCC32_PATH:$PATH"
 
