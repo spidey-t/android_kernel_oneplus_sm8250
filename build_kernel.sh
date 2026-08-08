@@ -62,6 +62,7 @@ zip -r9 "$ZIP_NAME" * -x .git README.md *placeholder
 OUTPUT_DIR="$HOME/kernel-zips"
 mkdir -p "$OUTPUT_DIR"
 cp "$ZIP_NAME" "$OUTPUT_DIR"
-cp "$ZIP_NAME" "$cwd"
-
-echo "==> Done! ZIP: $ZIP_NAME"
+mv "$ZIP_NAME" "$cwd" # Move the ZIP from Anykernel3 directory else next build will include all zip files
+echo "------------------------------ Completed ------------------------------"
+echo "-   $ZIP_NAME   -"
+echo "-----------------------------------------------------------------------"
