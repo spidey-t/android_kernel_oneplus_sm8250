@@ -5,6 +5,9 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/thread_info.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
 
 #include "uapi/supercall.h"
 #include "supercall/internal.h"
@@ -124,6 +127,9 @@ static int do_report_event(void __user *arg)
 				pr_info("boot_complete triggered\n");
 				on_boot_completed();
 			}
+#ifdef CONFIG_KSU_SUSFS
+			susfs_start_sdcard_monitor_fn();
+#endif
 		}
 		break;
 	}

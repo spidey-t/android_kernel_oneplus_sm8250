@@ -71,7 +71,6 @@ void stop_input_hook();
 static struct work_struct __maybe_unused stop_init_rc_hook_work;
 static struct work_struct __maybe_unused stop_execve_hook_work;
 static struct work_struct __maybe_unused stop_input_hook_work;
-bool ksu_input_hook __read_mostly = false;
 #else
 bool ksu_init_rc_hook __read_mostly = true;
 bool __maybe_unused ksu_vfs_read_hook = true;

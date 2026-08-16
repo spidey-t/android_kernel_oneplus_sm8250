@@ -51,6 +51,12 @@ bool is_task_ksu_domain(const struct cred* cred);
 
 bool is_ksu_domain();
 
+#ifdef CONFIG_KSU_SUSFS
+bool susfs_is_current_ksu_domain(void);
+extern u32 susfs_ksu_sid;
+extern u32 susfs_priv_app_sid;
+#endif
+
 bool is_zygote(const struct cred* cred);
 
 bool is_init(const struct cred* cred);

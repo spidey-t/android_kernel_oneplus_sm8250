@@ -1,5 +1,8 @@
 #include <linux/compiler.h>
 #include <linux/version.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
 #include <linux/sched/signal.h>
 #endif
@@ -29,6 +32,16 @@
 
 extern void disable_seccomp(struct task_struct *tsk);
 
+#ifdef CONFIG_KSU_SUSFS
+extern struct work_struct susfs_extra_works;
+
+static inline void ksu_handle_extra_susfs_work(void)
+{
+	if (!work_pending(&susfs_extra_works))
+		schedule_work(&susfs_extra_works);
+}
+#endif
+
 static void ksu_install_manager_fd_tw_func(struct callback_head *cb)
 {
     ksu_install_fd();
@@ -40,6 +53,14 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
     // we rely on the fact that zygote always call setresuid(3) with same uids
     uid_t new_uid = ruid;
     uid_t old_uid = current_uid().val;
+
+#ifdef CONFIG_KSU_SUSFS
+    if (!is_zygote(current_cred()))
+        return 0;
+
+    if (is_isolated_process(new_uid))
+        goto do_umount;
+#endif
 
     pr_debug("handle_setresuid from %d to %d\n", old_uid, new_uid);
 
@@ -69,6 +90,14 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
         return 0;
     }
 
+#ifdef CONFIG_KSU_SUSFS
+    if (unlikely(new_uid == WEBVIEW_ZYGOTE_UID))
+        return 0;
+
+    if (likely(is_appuid(new_uid) && ksu_uid_should_umount(new_uid)))
+        goto do_umount;
+#endif
+
 	if (ksu_is_allow_uid_for_current(new_uid)) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
@@ -87,8 +116,17 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
 #endif
     }
 
+#ifndef CONFIG_KSU_SUSFS
     // Handle kernel umount
     ksu_handle_umount(old_uid, new_uid);
+#else
+    return 0;
+
+do_umount:
+    ksu_handle_umount(old_uid, new_uid);
+    ksu_handle_extra_susfs_work();
+    susfs_set_current_proc_umounted();
+#endif
 
     return 0;
 }
