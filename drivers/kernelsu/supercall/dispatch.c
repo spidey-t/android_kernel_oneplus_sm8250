@@ -338,8 +338,22 @@ static int do_get_app_profile(void __user *arg)
 #endif
 
 	struct ksu_get_app_profile_cmd cmd;
+	size_t size;
+	u32 version;
 
-	if (copy_from_user(&cmd, arg, sizeof(cmd))) {
+	if (copy_from_user(&version, arg, sizeof(version))) {
+		pr_err("get_app_profile: copy_from_user failed\n");
+		return -EFAULT;
+	}
+
+	// Backward compatibility: pre-v4 callers use a 776-byte app_profile
+	// without the root_profile.flags field.
+	size = version < KSU_APP_PROFILE_VER
+		       ? offsetof(struct app_profile, rp_config.profile.flags)
+		       : sizeof(cmd);
+
+	memset(&cmd, 0, sizeof(cmd));
+	if (copy_from_user(&cmd, arg, size)) {
 		pr_err("get_app_profile: copy_from_user failed\n");
 		return -EFAULT;
 	}
@@ -348,7 +362,7 @@ static int do_get_app_profile(void __user *arg)
 		return -ENOENT;
 	}
 
-	if (copy_to_user(arg, &cmd, sizeof(cmd))) {
+	if (copy_to_user(arg, &cmd, size)) {
 		pr_err("get_app_profile: copy_to_user failed\n");
 		return -EFAULT;
 	}
@@ -363,9 +377,23 @@ static int do_set_app_profile(void __user *arg)
 #endif
 
     struct ksu_set_app_profile_cmd cmd;
+    size_t size;
     int ret;
+    u32 version;
 
-	if (copy_from_user(&cmd, arg, sizeof(cmd))) {
+	if (copy_from_user(&version, arg, sizeof(version))) {
+		pr_err("set_app_profile: copy_from_user failed\n");
+		return -EFAULT;
+	}
+
+	// Backward compatibility: pre-v4 callers use a 776-byte app_profile
+	// without the root_profile.flags field.
+	size = version < KSU_APP_PROFILE_VER
+		       ? offsetof(struct app_profile, rp_config.profile.flags)
+		       : sizeof(cmd);
+
+	memset(&cmd, 0, sizeof(cmd));
+	if (copy_from_user(&cmd, arg, size)) {
 		pr_err("set_app_profile: copy_from_user failed\n");
 		return -EFAULT;
 	}

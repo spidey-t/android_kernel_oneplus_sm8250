@@ -163,7 +163,7 @@ static bool profile_valid(struct app_profile *profile)
 		return false;
 	}
 
-	if (profile->version != KSU_APP_PROFILE_VER) {
+	if (profile->version > KSU_APP_PROFILE_VER) {
 		pr_info("Unsupported profile version: %d\n", profile->version);
 		return false;
 	}
@@ -197,6 +197,14 @@ int ksu_set_app_profile(struct app_profile *profile)
     if (!profile_valid(profile)) {
         pr_err("Failed to set app profile: invalid profile!\n");
         return -EINVAL;
+    }
+
+    if (profile->version < KSU_APP_PROFILE_VER) {
+        // Backward compatibility: accept legacy (pre-v4) profiles, e.g. from
+        // the stock KernelSU-Next manager which still sends version 3.
+        pr_info("migrating app profile %s from version %u to %u\n",
+                profile->key, profile->version, KSU_APP_PROFILE_VER);
+        profile->version = KSU_APP_PROFILE_VER;
     }
 
 #ifdef CONFIG_KSU_DISABLE_POLICY
