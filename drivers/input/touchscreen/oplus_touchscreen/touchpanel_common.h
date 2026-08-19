@@ -808,6 +808,7 @@ struct touchpanel_data {
 	bool spurious_fp_support; /*avoid fingerprint spurious trrigger feature*/
 	bool gesture_test_support; /*indicate test black gesture or not*/
 	bool game_switch_support; /*indicate game switch support or not*/
+	bool game_mode_enabled; /*track whether game mode is active*/
 	bool ear_sense_support; /*touch porximity function*/
 	bool smart_gesture_support; /*feature used to controltouch_major report*/
 	bool pressure_report_support; /*feature use to control ABS_MT_PRESSURE report*/
@@ -1029,6 +1030,7 @@ struct touchpanel_data {
 	u64 irq_interval; /*Record the interruption time to calculate the reporting rate*/
 	u64 irq_handle_time; /*Record the interruption handle time*/
 	int high_frame_value;
+	bool performance_mode;
 };
 
 #ifdef CONFIG_OPLUS_TP_APK
