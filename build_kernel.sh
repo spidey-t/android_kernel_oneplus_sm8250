@@ -17,7 +17,7 @@ export SUBARCH=arm64
 export KBUILD_BUILD_USER="spidey"
 export KBUILD_BUILD_HOST="spidey"
 
-MAKE_ARGS="O=out LLVM=1 LLVM_IAS=1 CC=clang CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+MAKE_ARGS="O=out LLVM=1 LLVM_IAS=1 CC=clang CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- CLANG_TRIPLE=aarch64-linux-gnu- KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=2993 KSU_GIT_TAG=v3.2.0-legacy"
 
 echo "==> Cleaning..."
 rm -rf out/
