@@ -139,3 +139,7 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+/out
+/out-lc
+Spidey_kernel_lemonades_anykernel3_*.zip
+build.log
