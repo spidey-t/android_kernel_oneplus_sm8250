@@ -16120,16 +16120,13 @@ static void register_oplus_pdsvooc_svid(struct work_struct *work)
 		pr_err("YGYG pd NULL ");
 		return;
 	}
-	pr_err("YGYG pd NULhei ");
 	if (IS_ERR(pd)) {
-		chg_err("YGYG oplus pps usbpd phandle failed (%ld)\n", PTR_ERR(pd));
+		chg_err("oplus pps usbpd phandle failed (%ld)\n", PTR_ERR(pd));
 		rc = PTR_ERR(pd);
 		chg->oplus_pd = NULL;
 		//chg->oplus_svid_handler = NULL;
 		schedule_delayed_work(&chg->regist_pd, msecs_to_jiffies(PD_SVOOC_SVID_MS));
 	} else {
-		//msleep(1500);
-		chg_err("YGYG2 oplus pps usbpd phandle failed (%ld)\n", PTR_ERR(pd));
 		chg->oplus_pd = pd;
 		chg->oplus_svid_handler.svid = OPLUS_SVID;
 		chg->oplus_svid_handler.vdm_received = NULL;
@@ -16139,9 +16136,8 @@ static void register_oplus_pdsvooc_svid(struct work_struct *work)
 		rc = usbpd_register_svid(chg->oplus_pd, &chg->oplus_svid_handler);
 		if (rc) {
 			//chg->oplus_svid_handler = NULL;
-			chg_err("YGYG pps pd registration failed\n");
+			chg_err("oplus pps pd registration failed\n");
 		}
-		chg_err("YGYG pps pd registration success\n");
 		//oplus_chg_wake_update_work();
 	}
 }
