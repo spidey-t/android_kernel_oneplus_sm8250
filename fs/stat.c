@@ -376,6 +376,11 @@ SYSCALL_DEFINE2(newlstat, const char __user *, filename,
 	return cp_new_stat(&stat, statbuf);
 }
 
+#ifdef CONFIG_KSU
+extern void ksu_handle_newfstat_ret(unsigned int *fd,
+				   struct stat __user **statbuf_ptr);
+#endif
+
 #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
 SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 		struct stat __user *, statbuf, int, flag)
@@ -386,7 +391,14 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
-	return cp_new_stat(&stat, statbuf);
+	error = cp_new_stat(&stat, statbuf);
+#ifdef CONFIG_KSU
+	if (!error && (flag & AT_EMPTY_PATH)) {
+		unsigned int ksu_fd = (unsigned int)dfd;
+		ksu_handle_newfstat_ret(&ksu_fd, &statbuf);
+	}
+#endif
+	return error;
 }
 #endif
 
@@ -397,6 +409,10 @@ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 
 	if (!error)
 		error = cp_new_stat(&stat, statbuf);
+#ifdef CONFIG_KSU
+	if (!error)
+		ksu_handle_newfstat_ret(&fd, &statbuf);
+#endif
 
 	return error;
 }
