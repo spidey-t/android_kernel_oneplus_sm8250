@@ -12695,14 +12695,41 @@ static int smb5_init_dc_psy(struct smb5 *chip)
  *************************/
 static enum power_supply_property ac_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_CURRENT_MAX,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 };
 
 static int smb5_ac_get_property(struct power_supply *psy, enum power_supply_property psp,
 				union power_supply_propval *val)
 {
 	int rc = 0;
+	struct smb_charger *chg = NULL;
 
-	rc = oplus_ac_get_property(psy, psp, val);
+	/*
+	 * Without CURRENT_MAX/VOLTAGE_MAX this psy only reports "online", so
+	 * healthd cannot derive maxChargingCurrentMicroamps/maxChargingVoltage-
+	 * Microvolts from an AC supply and reports them as 0. That makes every
+	 * consumer treat the charging current and the wattage derived from it as
+	 * unknown. Report the same input limits as the usb psy.
+	 */
+	if (g_oplus_chip && g_oplus_chip->pmic_spmi.smb5_chip)
+		chg = &g_oplus_chip->pmic_spmi.smb5_chip->chg;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		if (!chg)
+			return -EINVAL;
+		rc = smblib_get_prop_input_current_settled(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		if (!chg)
+			return -EINVAL;
+		rc = smblib_get_prop_usb_voltage_max(chg, val);
+		break;
+	default:
+		rc = oplus_ac_get_property(psy, psp, val);
+		break;
+	}
 
 	return rc;
 }
