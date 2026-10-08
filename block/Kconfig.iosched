@@ -33,6 +33,19 @@ config IOSCHED_CFQ
 
 	  This is the default I/O scheduler.
 
+config IOSCHED_SINGULARITY
+	tristate "Singularity cgroup-aware latency I/O scheduler"
+	depends on BLK_CGROUP
+	default n
+	---help---
+	  Singularity is a cgroup-aware scheduler focused on foreground
+	  latency on UFS-class storage. It uses weighted round-robin across
+	  blkcg-derived buckets and prioritizes synchronous I/O with bounded
+	  batching to avoid background starvation.
+
+	  Original author: The_Anomalist ("Singularity Performance Team"),
+	  ported from the Singularity kernel.
+
 config IOSCHED_FIOPS
 	tristate "IOPS based I/O scheduler"
 	default y
@@ -79,6 +92,9 @@ choice
 	config DEFAULT_CFQ
 		bool "CFQ" if IOSCHED_CFQ=y
 
+	config DEFAULT_SINGULARITY
+		bool "Singularity" if IOSCHED_SINGULARITY=y
+
 	config DEFAULT_NOOP
 		bool "No-op"
 
@@ -97,6 +113,7 @@ config DEFAULT_IOSCHED
 	string
 	default "deadline" if DEFAULT_DEADLINE
 	default "cfq" if DEFAULT_CFQ
+	default "singularity" if DEFAULT_SINGULARITY
 	default "noop" if DEFAULT_NOOP
 	default "fiops" if DEFAULT_FIOPS
 	default "sio" if DEFAULT_SIO
