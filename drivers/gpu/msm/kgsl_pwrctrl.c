@@ -291,6 +291,21 @@ void kgsl_pwrctrl_buslevel_update(struct kgsl_device *device,
 	 * otherwise request bus level 0, off.
 	 */
 	if (on) {
+		/*
+		 * Keep the top GPU OPP paired with its nominal/max bus vote.
+		 *
+		 * A stale negative bus_mod left behind by DCVS lets the vote
+		 * under-shoot the programmed qcom,bus-freq for the active
+		 * pwrlevel.  On Kona/A650 the overclocked top bin has no higher
+		 * bus corner to recover with, so allow no negative modifier
+		 * while the GPU is still running at its highest pwrlevel.
+		 * Lower pwrlevels keep their normal busmon DCVS range.
+		 */
+		if (pwr->active_pwrlevel == pwr->max_pwrlevel && pwr->bus_mod < 0) {
+			pwr->bus_mod = 0;
+			pwr->bus_percent_ab = 0;
+		}
+
 		buslevel = min_t(int, pwr->pwrlevels[0].bus_max,
 				cur + pwr->bus_mod);
 		buslevel = max_t(int, buslevel, 1);

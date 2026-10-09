@@ -57,9 +57,9 @@
 
 		qcom,initial-pwrlevel = <2>;
 
-		qcom,idle-timeout = <80>; /* msecs */
+		qcom,idle-timeout = <120>; /* msecs */
 
-		qcom,no-nap;
+		/* Let an idle GPU enter NAP/SLUMBER and gate the GX clock. */
 
 		qcom,highest-bank-bit = <16>;
 
@@ -113,10 +113,10 @@
 			compatible = "qcom,gpu-bus-table",
 				"qcom,gpu-bus-table-ddr7";
 			qcom,msm-bus,name = "grp3d";
-			qcom,msm-bus,num-cases = <12>;
+			qcom,msm-bus,num-cases = <14>;
 			qcom,msm-bus,num-paths = <1>;
 			qcom,msm-bus,vectors-KBps =
-				<26 512 0 MHZ_TO_KBPS(0, 4)>,    /* index=0  */
+				<26 512 1 MHZ_TO_KBPS(1, 4)>,    /* index=0  */
 				<26 512 0 MHZ_TO_KBPS(200, 4)>,  /* index=1  */
 				<26 512 0 MHZ_TO_KBPS(300, 4)>,  /* index=2  */
 				<26 512 0 MHZ_TO_KBPS(451, 4)>,  /* index=3  */
@@ -127,17 +127,19 @@
 				<26 512 0 MHZ_TO_KBPS(1353, 4)>, /* index=8  */
 				<26 512 0 MHZ_TO_KBPS(1555, 4)>, /* index=9  */
 				<26 512 0 MHZ_TO_KBPS(1804, 4)>, /* index=10 */
-				<26 512 0 MHZ_TO_KBPS(2092, 4)>; /* index=11 */
+				<26 512 0 MHZ_TO_KBPS(2092, 4)>, /* index=11 */
+				<26 512 0 MHZ_TO_KBPS(3200, 4)>, /* index=12 */
+				<26 512 0 MHZ_TO_KBPS(3600, 4)>; /* index=13 */
 		};
 
 		qcom,gpu-bus-table-1 {
 			compatible = "qcom,gpu-bus-table",
 				"qcom,gpu-bus-table-ddr8";
 			qcom,msm-bus,name = "grp3d";
-			qcom,msm-bus,num-cases = <12>;
+			qcom,msm-bus,num-cases = <14>;
 			qcom,msm-bus,num-paths = <1>;
 			qcom,msm-bus,vectors-KBps =
-				<26 512 0 MHZ_TO_KBPS(0, 4)>,    /* index=0  */
+				<26 512 1 MHZ_TO_KBPS(1, 4)>,    /* index=0  */
 				<26 512 0 MHZ_TO_KBPS(200, 4)>,  /* index=1  */
 				<26 512 0 MHZ_TO_KBPS(300, 4)>,  /* index=2  */
 				<26 512 0 MHZ_TO_KBPS(451, 4)>,  /* index=3  */
@@ -148,7 +150,9 @@
 				<26 512 0 MHZ_TO_KBPS(1555, 4)>, /* index=8  */
 				<26 512 0 MHZ_TO_KBPS(1804, 4)>, /* index=9  */
 				<26 512 0 MHZ_TO_KBPS(2092, 4)>, /* index=10 */
-				<26 512 0 MHZ_TO_KBPS(2736, 4)>; /* index=11 */
+				<26 512 0 MHZ_TO_KBPS(2736, 4)>, /* index=11 */
+				<26 512 0 MHZ_TO_KBPS(3200, 4)>, /* index=12 */
+				<26 512 0 MHZ_TO_KBPS(3600, 4)>; /* index=13 */
 		};
 
 		qcom,l3-pwrlevels {
@@ -197,13 +201,14 @@
 			qcom,gpu-mempool@2 {
 				reg = <2>;
 				qcom,mempool-page-size = <65536>;
-				qcom,mempool-reserved = <256>;
+				qcom,mempool-reserved = <448>;
+				qcom,mempool-allocate;
 			};
 			/* 1M Page Pool configuration */
 			qcom,gpu-mempool@3 {
 				reg = <3>;
 				qcom,mempool-page-size = <1048576>;
-				qcom,mempool-reserved = <32>;
+				qcom,mempool-reserved = <48>;
 			};
 		};
 
