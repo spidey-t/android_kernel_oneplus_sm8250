@@ -55,7 +55,7 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 	struct ib_parser_variables *ib_parse_vars);
 
 static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
-	unsigned int *ptr,
+	unsigned int *ptr, int size,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list);
 
@@ -485,15 +485,16 @@ static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
  */
 
 static int ib_parse_type7(struct kgsl_device *device, unsigned int *ptr,
+	unsigned int hdr, int pktsize,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list,
 	struct ib_parser_variables *ib_parse_vars)
 {
-	int opcode = cp_type7_opcode(*ptr);
+	int opcode = cp_type7_opcode(hdr);
 
 	switch (opcode) {
 	case CP_SET_DRAW_STATE:
-		return ib_parse_type7_set_draw_state(device, ptr, process,
+		return ib_parse_type7_set_draw_state(device, ptr, pktsize, process,
 					ib_obj_list);
 	}
 
@@ -638,11 +639,10 @@ static int ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 }
 
 static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
-	unsigned int *ptr,
+	unsigned int *ptr, int size,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list)
 {
-	int size = type7_pkt_size(*ptr);
 	int i;
 	int grp_id;
 	int ret = 0;
@@ -658,6 +658,11 @@ static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
 	 * loop counter by 3 always
 	 */
 	for (i = 1; i <= size; i += 3) {
+		if (i + 2 > size) {
+			ret = -EINVAL;
+			break;
+		}
+
 		grp_id = (ptr[i] & 0x1F000000) >> 24;
 		/* take action based on flags */
 		flags = (ptr[i] & 0x000F0000) >> 16;
@@ -873,18 +878,19 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 
 	for (i = 0; rem > 0; rem--, i++) {
 		int pktsize;
+		unsigned int hdr = READ_ONCE(src[i]);
 
-		if (pkt_is_type0(src[i]))
-			pktsize = type0_pkt_size(src[i]);
+		if (pkt_is_type0(hdr))
+			pktsize = type0_pkt_size(hdr);
 
-		else if (pkt_is_type3(src[i]))
-			pktsize = type3_pkt_size(src[i]);
+		else if (pkt_is_type3(hdr))
+			pktsize = type3_pkt_size(hdr);
 
-		else if (pkt_is_type4(src[i]))
-			pktsize = type4_pkt_size(src[i]);
+		else if (pkt_is_type4(hdr))
+			pktsize = type4_pkt_size(hdr);
 
-		else if (pkt_is_type7(src[i]))
-			pktsize = type7_pkt_size(src[i]);
+		else if (pkt_is_type7(hdr))
+			pktsize = type7_pkt_size(hdr);
 
 		/*
 		 * If the packet isn't a type 1, type 3, type 4 or type 7 then
@@ -893,12 +899,12 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 		else
 			break;
 
-		if (((pkt_is_type0(src[i]) || pkt_is_type3(src[i])) && !pktsize)
+		if (((pkt_is_type0(hdr) || pkt_is_type3(hdr)) && !pktsize)
 			|| ((pktsize + 1) > rem))
 			break;
 
-		if (pkt_is_type3(src[i])) {
-			if (adreno_cmd_is_ib(adreno_dev, src[i])) {
+		if (pkt_is_type3(hdr)) {
+			if (adreno_cmd_is_ib(adreno_dev, hdr)) {
 				uint64_t gpuaddrib2 = src[i + 1];
 				uint64_t size = src[i + 2];
 
@@ -922,8 +928,8 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 			}
 		}
 
-		else if (pkt_is_type7(src[i])) {
-			if (adreno_cmd_is_ib(adreno_dev, src[i])) {
+		else if (pkt_is_type7(hdr)) {
+			if (adreno_cmd_is_ib(adreno_dev, hdr)) {
 				uint64_t size = src[i + 3];
 				uint64_t gpuaddrib2 = src[i + 2];
 
@@ -935,7 +941,7 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 				if (ret)
 					goto done;
 			} else {
-				ret = ib_parse_type7(device, &src[i], process,
+				ret = ib_parse_type7(device, &src[i], hdr, pktsize, process,
 						ib_obj_list,
 						&ib_parse_vars);
 				/*
@@ -949,7 +955,7 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 			}
 		}
 
-		else if (pkt_is_type0(src[i])) {
+		else if (pkt_is_type0(hdr)) {
 			ret = ib_parse_type0(device, &src[i], process,
 					ib_obj_list, &ib_parse_vars);
 			if (ret)
