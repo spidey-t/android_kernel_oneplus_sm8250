@@ -12,6 +12,7 @@
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 #include <linux/compiler_types.h>
+#else
 #include <linux/compiler.h>
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
@@ -20,6 +21,7 @@
 #include <linux/sched.h>
 #endif
 #include <linux/ptrace.h>
+#include <linux/fcntl.h>
 
 #include "objsec.h"
 
@@ -28,6 +30,7 @@
 #include "policy/feature.h"
 #include "klog.h" // IWYU pragma: keep
 #include "runtime/ksud.h"
+#include "runtime/ksud_boot.h"
 #include "compat/kernel_compat.h"
 #include "sucompat.h"
 #include "policy/app_profile.h"
@@ -143,15 +146,20 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 	return 0;
 }
 
-long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs)
+static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
+		const char __user *const __user *argv_user, bool execveat,
+		const struct pt_regs *regs)
 {
 	const char su[] = SU_PATH;
 	const char __user *fn;
-	const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
 	struct ksu_sulog_pending_event *pending_sucompat = NULL;
 	char path[sizeof(su) + 1];
 	long ret;
 	unsigned long addr;
+
+	if (execveat && ((int)PT_REGS_PARM1(regs) != AT_FDCWD ||
+			 (int)PT_REGS_PARM5(regs) != 0))
+		goto do_orig_execve;
 
 	if (unlikely(!filename_user))
 		goto do_orig_execve;
@@ -162,7 +170,7 @@ long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, 
 	if (!ksu_is_allow_uid_for_current(current_uid().val))
 		goto do_orig_execve;
 
-	addr = untagged_addr((unsigned long)*filename_user);
+	addr = untagged_addr((unsigned long)READ_ONCE(*filename_user));
 	fn = (const char __user *)addr;
 	memset(path, 0, sizeof(path));
 
@@ -193,7 +201,19 @@ long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, 
 		goto do_orig_execve;
 	}
 	if (preempt_count() > 0) {
-		*filename_user = ksud_user_path();
+		/*
+		 * Can't open files here (kprobe context). Before the manager has
+		 * installed /data/adb/ksud, redirecting to it makes su fail with
+		 * ENOENT and the manager never gets a root shell to install it.
+		 * Use sh until then, and re-check in process context so su
+		 * switches to ksud as soon as the manager has installed it.
+		 */
+		if (READ_ONCE(ksu_ksud_present)) {
+			*filename_user = ksud_user_path();
+		} else {
+			*filename_user = sh_user_path();
+			ksu_recheck_ksud();
+		}
 	} else {
 		struct file *f = ksu_filp_open_compat(KSUD_PATH, O_RDONLY, 0);
 		if (IS_ERR(f)) {
@@ -210,6 +230,20 @@ do_orig_execve:
 	return 0;
 }
 
+long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs)
+{
+	return ksu_handle_execve_sucompat_common(filename_user,
+			(const char __user *const __user *)PT_REGS_PARM2(regs),
+			false, regs);
+}
+
+long ksu_handle_execveat_sucompat_user(const char __user **filename_user, int orig_nr, const struct pt_regs *regs)
+{
+	return ksu_handle_execve_sucompat_common(filename_user,
+			(const char __user *const __user *)PT_REGS_PARM3(regs),
+			true, regs);
+}
+
 int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 				 void *__never_use_argv, void *__never_use_envp,
 				 int *__never_use_flags)
@@ -217,6 +251,8 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 	struct filename *filename;
 	const char su[] = SU_PATH;
 	static const char ksud_path[] = KSUD_PATH;
+	struct ksu_sulog_pending_event *pending_root = NULL;
+	const char *const *sucompat_argv = (const char *const *)__never_use_argv;
 
 	if (unlikely(!filename_ptr))
 		return 0;
@@ -235,9 +271,13 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 		return 0;
 
 	pr_info("do_execveat_common su found\n");
+
+	pending_root = ksu_sulog_capture_root_execve_kern(filename->name, sucompat_argv, GFP_KERNEL);
+
 	memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
 
 	escape_with_root_profile();
+	ksu_sulog_emit_pending(pending_root, 0, GFP_KERNEL);
 
 	return 0;
 }

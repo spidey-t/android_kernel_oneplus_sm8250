@@ -21,6 +21,7 @@
  */
 static u32 cached_su_sid __read_mostly = 0;
 static u32 cached_zygote_sid __read_mostly = 0;
+static u32 cached_adbd_sid __read_mostly = 0;
 static u32 cached_init_sid __read_mostly = 0;
 #ifdef CONFIG_KSU_SUSFS
 u32 susfs_ksu_sid __read_mostly = 0;
@@ -137,6 +138,13 @@ struct lsm_context {
     u32 len;
 };
 
+#ifndef CONFIG_ANDROID
+int ksu_security_secctx_to_secid(const char *secdata, u32 seclen, u32 *secid)
+{
+	return security_secctx_to_secid(secdata, seclen, secid);
+}
+#endif
+
 static int __security_secid_to_secctx(u32 secid, struct lsm_context *cp)
 {
     return security_secid_to_secctx(secid, &cp->context, &cp->len);
@@ -179,6 +187,15 @@ void cache_sid(void)
         cached_zygote_sid = 0;
     } else {
         pr_info("Cached zygote SID: %u\n", cached_zygote_sid);
+    }
+
+    err = security_secctx_to_secid(ADBD_CONTEXT, strlen(ADBD_CONTEXT),
+                                   &cached_adbd_sid);
+    if (err) {
+        pr_warn("Failed to cache adbd SID: %d\n", err);
+        cached_adbd_sid = 0;
+    } else {
+        pr_info("Cached adbd SID: %u\n", cached_adbd_sid);
     }
 
     err = security_secctx_to_secid(INIT_CONTEXT, strlen(INIT_CONTEXT),
@@ -267,6 +284,11 @@ bool susfs_is_current_ksu_domain(void)
 bool is_zygote(const struct cred *cred)
 {
     return is_sid_match(cred, cached_zygote_sid, ZYGOTE_CONTEXT);
+}
+
+bool is_adbd(const struct cred *cred)
+{
+    return is_sid_match(cred, cached_adbd_sid, ADBD_CONTEXT);
 }
 
 bool is_init(const struct cred *cred)
