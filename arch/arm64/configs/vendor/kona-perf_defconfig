@@ -87,7 +87,7 @@ CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
 # Keep frequency selection load-aware at boot instead of falling back to
 # Kconfig's performance default, which pins each policy at its top OPP.
 CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+# CONFIG_WQ_POWER_EFFICIENT_DEFAULT is not set
 CONFIG_ARM_QCOM_CPUFREQ_HW=y
 CONFIG_CRYPTO_SHA1_ARM64_CE=y
 CONFIG_CRYPTO_SHA2_ARM64_CE=y
