@@ -806,19 +806,10 @@ static ssize_t mmi_charging_enable_store(struct device *dev, struct device_attri
 		} else {
 			oplus_chg_track_upload_mmi_chg_info(chip, 0);
 			chip->mmi_chg = 0;
-			if ((chip->vooc_project) && (oplus_vooc_get_fastchg_started() == true)) {
-				chip->mmi_fastchg = 0;
-			}
-			if (oplus_chg_get_voocphy_support() == ADSP_VOOCPHY) {
-				oplus_adsp_voocphy_turn_off();
-			} else {
-				if (!(((chip->pd_svooc == false &&
-					chip->chg_ops->get_charger_subtype() == CHARGER_SUBTYPE_PD) ||
-				       chip->chg_ops->get_charger_subtype() == CHARGER_SUBTYPE_QC) &&
-				      !oplus_vooc_get_fastchg_started()))
-					oplus_vooc_turn_off_fastchg();
-			}
-			/* avoid asic vooc bulk still enable after mmi_chg set 0 */
+			/*
+			 * Bypass: keep fast-charge/VOOC negotiation alive to preserve input current limit
+			 * so adapter can supply system load under gaming. Only disable battery charging.
+			 */
 			oplus_chg_turn_off_charging(chip);
 			if (oplus_voocphy_get_bidirect_cp_support() && chip->chg_ops->check_chrdet_status()) {
 				oplus_voocphy_set_chg_auto_mode(true);
