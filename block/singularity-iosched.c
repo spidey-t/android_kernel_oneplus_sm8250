@@ -44,11 +44,10 @@ MODULE_PARM_DESC(adaptive_batch,
 static unsigned int sing_bg_starve_ms = SING_BG_STARVE_MS;
 module_param_named(bg_starve_ms, sing_bg_starve_ms, uint, 0644);
 MODULE_PARM_DESC(bg_starve_ms,
-		 "Maximum time to defer background I/O while sync I/O is queued");
+		 "Background queue age threshold for priority dispatch");
 
 struct sing_data {
 	struct list_head q[SING_NR_CLASSES][SING_MAX_BUCKETS];
-	unsigned long bg_head_jiffies[SING_MAX_BUCKETS];
 	unsigned long active[SING_NR_CLASSES][BITS_TO_LONGS(SING_MAX_BUCKETS)];
 	unsigned int rr[SING_NR_CLASSES];
 	unsigned int fg_budget;
@@ -80,21 +79,33 @@ static inline struct list_head *sing_list(struct sing_data *sd,
 	return &sd->q[sing_class(rq)][sing_bucket(rq)];
 }
 
-static inline bool sing_bg_starving(struct sing_data *sd)
+/* Return the bucket containing the oldest expired background request. */
+static unsigned int sing_expired_bg_bucket(struct sing_data *sd)
 {
-	unsigned int i;
-	unsigned long now = jiffies;
+	unsigned int i, oldest = SING_MAX_BUCKETS;
+	unsigned long now = jiffies, oldest_time = 0;
 	unsigned long starve = msecs_to_jiffies(max_t(unsigned int, 1,
 							 sing_bg_starve_ms));
 
 	for (i = 0; i < SING_MAX_BUCKETS; i++) {
-		if (!sd->bg_head_jiffies[i])
+		struct request *rq;
+		unsigned long queued_at;
+
+		if (!test_bit(i, sd->active[SING_BG_CLASS]))
 			continue;
-		if (time_after_eq(now, sd->bg_head_jiffies[i] + starve))
-			return true;
+		rq = list_first_entry(&sd->q[SING_BG_CLASS][i],
+				      struct request, queuelist);
+		queued_at = (unsigned long)rq->fifo_time;
+		if (time_before(now, queued_at + starve))
+			continue;
+		if (oldest == SING_MAX_BUCKETS ||
+		    time_before(queued_at, oldest_time)) {
+			oldest = i;
+			oldest_time = queued_at;
+		}
 	}
 
-	return false;
+	return oldest;
 }
 
 static inline unsigned int sing_dynamic_fg_batch(struct sing_data *sd)
@@ -135,26 +146,15 @@ static void sing_remove_request(struct sing_data *sd, struct request *rq)
 {
 	unsigned int class = sing_class(rq);
 	unsigned int bucket = sing_bucket(rq);
-	bool was_head;
 
 	if (list_empty(&rq->queuelist))
 		return;
 
-	was_head = class == SING_BG_CLASS &&
-		   rq == list_first_entry_or_null(&sd->q[class][bucket],
-						     struct request, queuelist);
 	list_del_init(&rq->queuelist);
 	if (sd->queued[class])
 		sd->queued[class]--;
 	if (list_empty(&sd->q[class][bucket]))
 		__clear_bit(bucket, sd->active[class]);
-
-	if (class == SING_BG_CLASS && was_head) {
-		if (list_empty(&sd->q[class][bucket]))
-			sd->bg_head_jiffies[bucket] = 0;
-		else
-			sd->bg_head_jiffies[bucket] = jiffies;
-	}
 }
 
 static void sing_merged_requests(struct request_queue *q, struct request *rq,
@@ -162,14 +162,36 @@ static void sing_merged_requests(struct request_queue *q, struct request *rq,
 {
 	struct sing_data *sd = q->elevator->elevator_data;
 
+	/* Keep the older FIFO position when two queued peers merge. */
+	if (!list_empty(&rq->queuelist) && !list_empty(&next->queuelist) &&
+	    sing_class(rq) == sing_class(next) &&
+	    sing_bucket(rq) == sing_bucket(next) &&
+	    time_before((unsigned long)next->fifo_time,
+			(unsigned long)rq->fifo_time)) {
+		list_move(&rq->queuelist, &next->queuelist);
+		rq->fifo_time = next->fifo_time;
+	}
 	sing_remove_request(sd, next);
+}
+
+static int sing_dispatch_bucket(struct request_queue *q, struct sing_data *sd,
+				unsigned int class, unsigned int bucket)
+{
+	struct request *rq;
+
+	if (bucket == SING_MAX_BUCKETS)
+		return 0;
+	rq = list_first_entry(&sd->q[class][bucket], struct request, queuelist);
+	sing_remove_request(sd, rq);
+	sd->rr[class] = (bucket + 1) & (SING_MAX_BUCKETS - 1);
+	elv_dispatch_sort(q, rq);
+	return 1;
 }
 
 static int sing_dispatch_class(struct request_queue *q, struct sing_data *sd,
 			       unsigned int class)
 {
 	unsigned int b;
-	struct request *rq;
 
 	/*
 	 * Walking every cgroup bucket for every dispatched request is expensive
@@ -179,14 +201,7 @@ static int sing_dispatch_class(struct request_queue *q, struct sing_data *sd,
 	b = find_next_bit(sd->active[class], SING_MAX_BUCKETS, sd->rr[class]);
 	if (b == SING_MAX_BUCKETS)
 		b = find_first_bit(sd->active[class], SING_MAX_BUCKETS);
-	if (b == SING_MAX_BUCKETS)
-		return 0;
-
-	rq = list_first_entry(&sd->q[class][b], struct request, queuelist);
-	sing_remove_request(sd, rq);
-	sd->rr[class] = (b + 1) & (SING_MAX_BUCKETS - 1);
-	elv_dispatch_sort(q, rq);
-	return 1;
+	return sing_dispatch_bucket(q, sd, class, b);
 }
 
 static int sing_dispatch(struct request_queue *q, int force)
@@ -194,9 +209,11 @@ static int sing_dispatch(struct request_queue *q, int force)
 	struct sing_data *sd = q->elevator->elevator_data;
 	unsigned int fg_batch = sing_dynamic_fg_batch(sd);
 
-	/* Bound BG latency to avoid stalling streaming writes. */
-	if (sd->queued[SING_BG_CLASS] && sing_bg_starving(sd) &&
-	    sing_dispatch_class(q, sd, SING_BG_CLASS)) {
+	/* Expired writes get priority, but cannot exclude pending sync I/O. */
+	if (sd->queued[SING_BG_CLASS] &&
+	    (!sd->queued[SING_SYNC_CLASS] || sd->fg_budget) &&
+	    sing_dispatch_bucket(q, sd, SING_BG_CLASS,
+				 sing_expired_bg_bucket(sd))) {
 		sd->fg_budget = 0;
 		return 1;
 	}
@@ -227,12 +244,11 @@ static void sing_add_request(struct request_queue *q, struct request *rq)
 	struct list_head *head = &sd->q[class][bucket];
 	bool was_empty = list_empty(head);
 
+	rq->fifo_time = jiffies;
 	list_add_tail(&rq->queuelist, head);
 	sd->queued[class]++;
 	if (was_empty)
 		__set_bit(bucket, sd->active[class]);
-	if (class == SING_BG_CLASS && was_empty)
-		sd->bg_head_jiffies[bucket] = jiffies;
 }
 
 static struct request *sing_former_request(struct request_queue *q,
