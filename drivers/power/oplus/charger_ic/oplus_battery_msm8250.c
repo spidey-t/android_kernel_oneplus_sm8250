@@ -12699,10 +12699,25 @@ static enum power_supply_property ac_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 };
 
+static bool smb5_get_vooc_live_charge_info(int *current_ua, int *voltage_uv)
+{
+	struct oplus_chg_chip *chip = g_oplus_chip;
+
+	if (!chip || !oplus_vooc_get_fastchg_ing() || chip->vbatt_num <= 0 ||
+	    chip->batt_volt <= 0)
+		return false;
+
+	/* Match Oplus' live battery-power calculation: icharging * batt_volt * vbatt_num. */
+	*current_ua = abs(chip->icharging) * 1000;
+	*voltage_uv = chip->batt_volt * chip->vbatt_num * 1000;
+	return true;
+}
+
 static int smb5_ac_get_property(struct power_supply *psy, enum power_supply_property psp,
 				union power_supply_propval *val)
 {
 	int rc = 0;
+	int current_ua, voltage_uv;
 	struct smb_charger *chg = NULL;
 
 	/*
@@ -12717,11 +12732,19 @@ static int smb5_ac_get_property(struct power_supply *psy, enum power_supply_prop
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		if (smb5_get_vooc_live_charge_info(&current_ua, &voltage_uv)) {
+			val->intval = current_ua;
+			break;
+		}
 		if (!chg)
 			return -EINVAL;
 		rc = smblib_get_prop_input_current_settled(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		if (smb5_get_vooc_live_charge_info(&current_ua, &voltage_uv)) {
+			val->intval = voltage_uv;
+			break;
+		}
 		if (!chg)
 			return -EINVAL;
 		rc = smblib_get_prop_usb_voltage_max(chg, val);
