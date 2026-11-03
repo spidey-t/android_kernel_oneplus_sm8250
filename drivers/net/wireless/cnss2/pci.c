@@ -2825,17 +2825,19 @@ static int cnss_pci_suspend(struct device *dev)
 		pci_priv->drv_connected_last =
 			cnss_pci_get_drv_connected(pci_priv);
 		if (!pci_priv->drv_connected_last) {
-			cnss_pr_dbg("Firmware does not support non-DRV suspend, reject\n");
-			ret = -EAGAIN;
-			goto out;
+			cnss_pr_dbg("Firmware does not support non-DRV suspend, powering down link only\n");
 		}
+	} else {
+		pci_priv->drv_connected_last = 1;
 	}
 
 	set_bit(CNSS_IN_SUSPEND_RESUME, &plat_priv->driver_state);
 
-	ret = cnss_pci_suspend_driver(pci_priv);
-	if (ret)
-		goto clear_flag;
+	if (pci_priv->drv_connected_last) {
+		ret = cnss_pci_suspend_driver(pci_priv);
+		if (ret)
+			goto clear_flag;
+	}
 
 	if (!pci_priv->disable_pc) {
 		mutex_lock(&pci_priv->bus_lock);
@@ -2850,7 +2852,8 @@ static int cnss_pci_suspend(struct device *dev)
 	return 0;
 
 resume_driver:
-	cnss_pci_resume_driver(pci_priv);
+	if (pci_priv->drv_connected_last)
+		cnss_pci_resume_driver(pci_priv);
 clear_flag:
 	pci_priv->drv_connected_last = 0;
 	clear_bit(CNSS_IN_SUSPEND_RESUME, &plat_priv->driver_state);
@@ -2886,7 +2889,11 @@ static int cnss_pci_resume(struct device *dev)
 			goto out;
 	}
 
-	ret = cnss_pci_resume_driver(pci_priv);
+	if (pci_priv->drv_connected_last) {
+		ret = cnss_pci_resume_driver(pci_priv);
+		if (ret)
+			goto out;
+	}
 
 	pci_priv->drv_connected_last = 0;
 	clear_bit(CNSS_IN_SUSPEND_RESUME, &plat_priv->driver_state);
@@ -2959,15 +2966,17 @@ static int cnss_pci_runtime_suspend(struct device *dev)
 		pci_priv->drv_connected_last =
 			cnss_pci_get_drv_connected(pci_priv);
 		if (!pci_priv->drv_connected_last) {
-			cnss_pr_dbg("Firmware does not support non-DRV suspend, reject\n");
-			return -EAGAIN;
+			cnss_pr_dbg("Firmware does not support non-DRV suspend, powering down link only\n");
 		}
+	} else {
+		pci_priv->drv_connected_last = 1;
 	}
 
 	cnss_pr_vdbg("Runtime suspend start\n");
 
 	driver_ops = pci_priv->driver_ops;
-	if (driver_ops && driver_ops->runtime_ops &&
+	if (pci_priv->drv_connected_last && driver_ops &&
+	    driver_ops->runtime_ops &&
 	    driver_ops->runtime_ops->runtime_suspend)
 		ret = driver_ops->runtime_ops->runtime_suspend(pci_dev);
 	else
@@ -3002,7 +3011,8 @@ static int cnss_pci_runtime_resume(struct device *dev)
 	cnss_pr_vdbg("Runtime resume start\n");
 
 	driver_ops = pci_priv->driver_ops;
-	if (driver_ops && driver_ops->runtime_ops &&
+	if (pci_priv->drv_connected_last && driver_ops &&
+	    driver_ops->runtime_ops &&
 	    driver_ops->runtime_ops->runtime_resume)
 		ret = driver_ops->runtime_ops->runtime_resume(pci_dev);
 	else
