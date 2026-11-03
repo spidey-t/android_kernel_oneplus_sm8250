@@ -1896,6 +1896,7 @@ static void unregister_adhoc(struct msm_bus_client_handle *cl)
 				cl->first_hop, cl->active_only);
 	commit_data();
 	msm_bus_dbg_remove_client(cl);
+	put_device(cl->mas_dev);
 	kfree(cl);
 	MSM_BUS_DBG("%s: Unregistered client", __func__);
 exit_unregister_client:
@@ -1949,6 +1950,7 @@ register_adhoc(uint32_t mas, uint32_t slv, char *name, bool active_only)
 	if (client->first_hop < 0) {
 		MSM_BUS_ERR("%s:Failed to find path.src %d dest %d",
 			__func__, client->mas, client->slv);
+		put_device(client->mas_dev);
 		free_cl_mem(client);
 		goto exit_register;
 	}
