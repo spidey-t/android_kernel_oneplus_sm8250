@@ -6,8 +6,13 @@
 #include <linux/utsname.h>
 #include <linux/hashtable.h>
 #include <linux/path.h>
+#include <linux/seq_file.h>
+#include <linux/srcu.h>
 #include <linux/susfs_def.h>
 #include <linux/statfs.h>
+#include <linux/workqueue.h>
+
+struct mount;
 
 #define SUSFS_VERSION "v2.2.0"
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
@@ -186,19 +191,26 @@ struct st_susfs_version {
 /***********************/
 /* sus_path */
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+extern const struct qstr susfs_fake_qstr_name;
 void susfs_add_sus_path(void __user **user_info);
 void susfs_add_sus_path_loop(void __user **user_info);
+bool susfs_is_inode_sus_path(struct inode *inode);
+int susfs_get_data_path(struct path *path);
 #endif
 
 /* sus_mount */
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info);
+int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt);
+struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 /* sus_kstat */
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 void susfs_add_sus_kstat(void __user **user_info);
 void susfs_update_sus_kstat(void __user **user_info);
+void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
+void susfs_sus_kstat_spoof_show_map_vma(struct inode *inode, dev_t *out_dev, unsigned long *out_ino);
 #endif
 
 /* spoof_uname */
@@ -219,7 +231,14 @@ void susfs_set_cmdline_or_bootconfig(void __user **user_info);
 
 /* open_redirect */
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+extern struct srcu_struct susfs_srcu_open_redirect;
 void susfs_add_open_redirect(void __user **user_info);
+struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);
+int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen);
+int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen);
+int susfs_open_redirect_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf);
+int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, unsigned long *out_ino);
+int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);
 #endif
 
 /* sus_map */
@@ -233,9 +252,12 @@ void susfs_get_enabled_features(void __user **user_info);
 void susfs_show_variant(void __user **user_info);
 void susfs_show_version(void __user **user_info);
 
+bool susfs_is_current_ksu_domain(void);
+bool susfs_is_mnt_devname_ksu(struct path *path);
 void susfs_start_sdcard_monitor_fn(void);
 
 /* susfs_init */
+extern struct work_struct susfs_extra_works;
 void susfs_init(void);
 
 #endif
