@@ -26,6 +26,8 @@
 #define SING_DYN_FG_BATCH_MIN    8
 #define SING_DYN_FG_BATCH_MAX    32
 #define SING_BG_STARVE_MS        6
+#define SING_SYNC_STARVE_MS      8
+#define SING_EXPIRED_FG_BATCH    8
 
 /*
  * Switching classes too frequently breaks up the request stream delivered to
@@ -44,7 +46,12 @@ MODULE_PARM_DESC(adaptive_batch,
 static unsigned int sing_bg_starve_ms = SING_BG_STARVE_MS;
 module_param_named(bg_starve_ms, sing_bg_starve_ms, uint, 0644);
 MODULE_PARM_DESC(bg_starve_ms,
-		 "Background queue age threshold for priority dispatch");
+		 "Async queue age threshold for priority dispatch");
+
+static unsigned int sing_sync_starve_ms = SING_SYNC_STARVE_MS;
+module_param_named(sync_starve_ms, sing_sync_starve_ms, uint, 0644);
+MODULE_PARM_DESC(sync_starve_ms,
+		 "Sync queue age threshold for oldest-first bucket selection");
 
 struct sing_data {
 	struct list_head q[SING_NR_CLASSES][SING_MAX_BUCKETS];
@@ -79,21 +86,21 @@ static inline struct list_head *sing_list(struct sing_data *sd,
 	return &sd->q[sing_class(rq)][sing_bucket(rq)];
 }
 
-/* Return the bucket containing the oldest expired background request. */
-static unsigned int sing_expired_bg_bucket(struct sing_data *sd)
+/* FIFO age is a scheduler wait threshold, not a completion deadline. */
+static unsigned int sing_expired_bucket(struct sing_data *sd,
+				       unsigned int class, unsigned int starve_ms)
 {
 	unsigned int i, oldest = SING_MAX_BUCKETS;
 	unsigned long now = jiffies, oldest_time = 0;
-	unsigned long starve = msecs_to_jiffies(max_t(unsigned int, 1,
-							 sing_bg_starve_ms));
+	unsigned long starve = msecs_to_jiffies(max_t(unsigned int, 1, starve_ms));
 
-	for (i = 0; i < SING_MAX_BUCKETS; i++) {
+	for (i = find_first_bit(sd->active[class], SING_MAX_BUCKETS);
+	     i < SING_MAX_BUCKETS;
+	     i = find_next_bit(sd->active[class], SING_MAX_BUCKETS, i + 1)) {
 		struct request *rq;
 		unsigned long queued_at;
 
-		if (!test_bit(i, sd->active[SING_BG_CLASS]))
-			continue;
-		rq = list_first_entry(&sd->q[SING_BG_CLASS][i],
+		rq = list_first_entry(&sd->q[class][i],
 				      struct request, queuelist);
 		queued_at = (unsigned long)rq->fifo_time;
 		if (time_before(now, queued_at + starve))
@@ -113,12 +120,13 @@ static inline unsigned int sing_dynamic_fg_batch(struct sing_data *sd)
 	unsigned int sync_q = sd->queued[SING_SYNC_CLASS];
 	unsigned int bg_q = sd->queued[SING_BG_CLASS];
 	unsigned int total_q = sync_q + bg_q;
+	unsigned int configured = READ_ONCE(sing_fg_batch);
 	unsigned int batch;
 
-	if (!sing_adaptive_batch)
-		return max_t(unsigned int, 1, sing_fg_batch);
+	if (!READ_ONCE(sing_adaptive_batch))
+		return clamp_t(unsigned int, configured, 1, SING_DYN_FG_BATCH_MAX);
 
-	batch = clamp_t(unsigned int, sing_fg_batch,
+	batch = clamp_t(unsigned int, configured,
 			SING_DYN_FG_BATCH_MIN, SING_DYN_FG_BATCH_MAX);
 
 	/*
@@ -157,6 +165,21 @@ static void sing_remove_request(struct sing_data *sd, struct request *rq)
 		__clear_bit(bucket, sd->active[class]);
 }
 
+/* Keep the class and cgroup of a queued request stable across front merges. */
+static int sing_allow_bio_merge(struct request_queue *q, struct request *rq,
+				struct bio *bio)
+{
+	return rq->bio && rq_is_sync(rq) == op_is_sync(bio->bi_opf) &&
+		bio_blkcg(rq->bio) == bio_blkcg(bio);
+}
+
+static int sing_allow_rq_merge(struct request_queue *q, struct request *rq,
+			       struct request *next)
+{
+	return rq->bio && next->bio && sing_class(rq) == sing_class(next) &&
+		bio_blkcg(rq->bio) == bio_blkcg(next->bio);
+}
+
 static void sing_merged_requests(struct request_queue *q, struct request *rq,
 				 struct request *next)
 {
@@ -184,7 +207,8 @@ static int sing_dispatch_bucket(struct request_queue *q, struct sing_data *sd,
 	rq = list_first_entry(&sd->q[class][bucket], struct request, queuelist);
 	sing_remove_request(sd, rq);
 	sd->rr[class] = (bucket + 1) & (SING_MAX_BUCKETS - 1);
-	elv_dispatch_sort(q, rq);
+	/* Preserve the scheduler's chosen order on the core dispatch list. */
+	elv_dispatch_add_tail(q, rq);
 	return 1;
 }
 
@@ -192,6 +216,13 @@ static int sing_dispatch_class(struct request_queue *q, struct sing_data *sd,
 			       unsigned int class)
 {
 	unsigned int b;
+
+	/* Age protection within the sync class, including bucket collisions. */
+	if (class == SING_SYNC_CLASS && sd->queued[class]) {
+		b = sing_expired_bucket(sd, class, READ_ONCE(sing_sync_starve_ms));
+		if (b != SING_MAX_BUCKETS)
+			return sing_dispatch_bucket(q, sd, class, b);
+	}
 
 	/*
 	 * Walking every cgroup bucket for every dispatched request is expensive
@@ -208,12 +239,19 @@ static int sing_dispatch(struct request_queue *q, int force)
 {
 	struct sing_data *sd = q->elevator->elevator_data;
 	unsigned int fg_batch = sing_dynamic_fg_batch(sd);
+	unsigned int expired_batch = min_t(unsigned int, fg_batch,
+					 SING_EXPIRED_FG_BATCH);
 
-	/* Expired writes get priority, but cannot exclude pending sync I/O. */
+	/*
+	 * Expired async I/O shortens the sync run, but must not turn sustained
+	 * mixed traffic into one sync followed by one async request forever.
+	 * With the default policy it gets one slot after eight sync requests.
+	 */
 	if (sd->queued[SING_BG_CLASS] &&
-	    (!sd->queued[SING_SYNC_CLASS] || sd->fg_budget) &&
+	    (!sd->queued[SING_SYNC_CLASS] || sd->fg_budget >= expired_batch) &&
 	    sing_dispatch_bucket(q, sd, SING_BG_CLASS,
-				 sing_expired_bg_bucket(sd))) {
+				 sing_expired_bucket(sd, SING_BG_CLASS,
+						     READ_ONCE(sing_bg_starve_ms)))) {
 		sd->fg_budget = 0;
 		return 1;
 	}
@@ -244,6 +282,10 @@ static void sing_add_request(struct request_queue *q, struct request *rq)
 	struct list_head *head = &sd->q[class][bucket];
 	bool was_empty = list_empty(head);
 
+	/* A fresh burst must not inherit an exhausted budget from idle. */
+	if (!sd->queued[SING_SYNC_CLASS] && !sd->queued[SING_BG_CLASS])
+		sd->fg_budget = 0;
+
 	rq->fifo_time = jiffies;
 	list_add_tail(&rq->queuelist, head);
 	sd->queued[class]++;
@@ -256,10 +298,13 @@ static struct request *sing_former_request(struct request_queue *q,
 {
 	struct sing_data *sd = q->elevator->elevator_data;
 	struct list_head *head = sing_list(sd, rq);
+	struct request *prev;
 
-	if (rq->queuelist.prev == head)
+	if (list_empty(&rq->queuelist) || rq->queuelist.prev == head)
 		return NULL;
-	return list_prev_entry(rq, queuelist);
+	prev = list_prev_entry(rq, queuelist);
+	/* Neighbor merges bypass elevator_allow_rq_merge_fn in this core. */
+	return sing_allow_rq_merge(q, prev, rq) ? prev : NULL;
 }
 
 static struct request *sing_latter_request(struct request_queue *q,
@@ -267,10 +312,12 @@ static struct request *sing_latter_request(struct request_queue *q,
 {
 	struct sing_data *sd = q->elevator->elevator_data;
 	struct list_head *head = sing_list(sd, rq);
+	struct request *next;
 
-	if (rq->queuelist.next == head)
+	if (list_empty(&rq->queuelist) || rq->queuelist.next == head)
 		return NULL;
-	return list_next_entry(rq, queuelist);
+	next = list_next_entry(rq, queuelist);
+	return sing_allow_rq_merge(q, rq, next) ? next : NULL;
 }
 
 static int sing_init_queue(struct request_queue *q, struct elevator_type *e)
@@ -315,6 +362,8 @@ static void sing_exit_queue(struct elevator_queue *e)
 
 static struct elevator_type elevator_singularity = {
 	.ops.sq = {
+		.elevator_allow_bio_merge_fn    = sing_allow_bio_merge,
+		.elevator_allow_rq_merge_fn     = sing_allow_rq_merge,
 		.elevator_merge_req_fn          = sing_merged_requests,
 		.elevator_dispatch_fn           = sing_dispatch,
 		.elevator_add_req_fn            = sing_add_request,
