@@ -457,9 +457,11 @@ void sched_account_irqtime(int cpu, struct task_struct *curr,
 	if (nr_windows) {
 		if (nr_windows < 10) {
 			/* Decay CPU's irqload by 3/4 for each window. */
-			rq->avg_irqload *= (3 * nr_windows);
-			rq->avg_irqload = div64_u64(rq->avg_irqload,
-						    4 * nr_windows);
+			while (nr_windows) {
+				rq->avg_irqload =
+					div64_u64(rq->avg_irqload * 3, 4);
+				nr_windows--;
+			}
 		} else {
 			rq->avg_irqload = 0;
 		}
