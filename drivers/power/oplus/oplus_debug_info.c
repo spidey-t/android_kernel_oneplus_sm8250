@@ -946,6 +946,22 @@ static int oplus_chg_get_vooc_input_power(struct oplus_chg_chip *chip)
 	return input_power;
 }
 
+int oplus_chg_get_vooc_input_power_estimate(struct oplus_chg_chip *chip)
+{
+	int i;
+
+	if (!chip || !oplus_vooc_get_fastchg_ing())
+		return 0;
+
+	/* Avoid reporting the 20 W fallback for adapter IDs absent from this table. */
+	for (i = 0; i < ARRAY_SIZE(vooc_charger_type_list); i++) {
+		if (oplus_chg_debug_info.fast_chg_type == vooc_charger_type_list[i].chg_type)
+			return oplus_chg_get_vooc_input_power(chip);
+	}
+
+	return 0;
+}
+
 static int oplus_chg_get_charge_power(struct oplus_chg_chip *chip)
 {
 	int charge_power;

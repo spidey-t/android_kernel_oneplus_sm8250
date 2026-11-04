@@ -51,6 +51,7 @@
 #include <soc/oplus/system/oplus_project.h>
 #include "oplus_battery_msm8250.h"
 #include "../oplus_charger.h"
+#include "../oplus_debug_info.h"
 #include "../oplus_gauge.h"
 #include "../oplus_vooc.h"
 #include "../oplus_short.h"
@@ -12697,6 +12698,7 @@ static enum power_supply_property ac_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_POWER_NOW,
 };
 
 static bool smb5_get_vooc_live_charge_info(int *current_ua, int *voltage_uv)
@@ -12731,6 +12733,10 @@ static int smb5_ac_get_property(struct power_supply *psy, enum power_supply_prop
 		chg = &g_oplus_chip->pmic_spmi.smb5_chip->chg;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_POWER_NOW:
+		/* Oplus VOOC estimate in microwatts; zero when VOOC isn't active or mapped. */
+		val->intval = oplus_chg_get_vooc_input_power_estimate(g_oplus_chip);
+		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		if (smb5_get_vooc_live_charge_info(&current_ua, &voltage_uv)) {
 			val->intval = current_ua;
